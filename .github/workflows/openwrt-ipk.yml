@@ -115,6 +115,9 @@ jobs:
           go-version-file: ${{ env.GO_VERSION_FILE }}
           cache: true
 
+      - name: Run go generate (embed workspace files)
+        run: go generate ./...
+
       - name: Cross-compile picoclaw
         env:
           CGO_ENABLED: "0"

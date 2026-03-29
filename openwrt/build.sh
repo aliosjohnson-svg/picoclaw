@@ -45,7 +45,11 @@ LUCI_PKG_FULL="luci-app-picoclaw_1.0.0-1_all"
 
 mkdir -p "$IPK_DIR"
 
-# ─── 1. Compile binary ────────────────────────────────────────────────────────
+# ─── 1. Run go generate (copies workspace/ for embed) ────────────────────────
+echo "==> Running go generate..."
+(cd "$REPO_ROOT" && go generate ./...)
+
+# ─── 2. Compile binary ────────────────────────────────────────────────────────
 echo "==> Compiling picoclaw for $ARCH (GOARCH=$GOARCH GOARM=${GOARM:-n/a})..."
 BINARY="$BUILD_DIR/picoclaw"
 (
