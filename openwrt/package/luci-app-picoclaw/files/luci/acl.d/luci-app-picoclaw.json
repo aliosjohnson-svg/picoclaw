@@ -1,0 +1,11 @@
+{
+	"luci-app-picoclaw": {
+		"description": "Grant UCI access for picoclaw configuration",
+		"read": {
+			"uci": [ "picoclaw" ]
+		},
+		"write": {
+			"uci": [ "picoclaw" ]
+		}
+	}
+}

@@ -1,0 +1,85 @@
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "PicoClaw AI Agent"
+msgstr "PicoClaw AI 助手"
+
+msgid "PicoClaw is an ultra-lightweight personal AI assistant. Configure your LLM provider and start the gateway service."
+msgstr "PicoClaw 是一款超轻量级个人 AI 助手。请配置您的大模型提供商并启动网关服务。"
+
+msgid "Service"
+msgstr "服务"
+
+msgid "Status"
+msgstr "状态"
+
+msgid "Running"
+msgstr "运行中"
+
+msgid "Stopped"
+msgstr "已停止"
+
+msgid "Enable"
+msgstr "启用"
+
+msgid "Model Configuration"
+msgstr "模型配置"
+
+msgid "Provider"
+msgstr "提供商"
+
+msgid "Custom (OpenAI-compatible)"
+msgstr "自定义（兼容 OpenAI 接口）"
+
+msgid "Model"
+msgstr "模型"
+
+msgid "Custom model name (set below)"
+msgstr "自定义模型名称（请在下方填写）"
+
+msgid "Custom Model Name"
+msgstr "自定义模型名称"
+
+msgid "API Key"
+msgstr "API 密钥"
+
+msgid "API Base URL"
+msgstr "API 基础地址"
+
+msgid "Leave empty to use provider default"
+msgstr "留空则使用提供商默认地址"
+
+msgid "Required for custom/self-hosted deployments. Example: https://my-proxy.example.com/v1"
+msgstr "自定义或自托管部署时必填。示例：https://my-proxy.example.com/v1"
+
+msgid "Gateway Settings"
+msgstr "网关设置"
+
+msgid "Listen Address"
+msgstr "监听地址"
+
+msgid "0.0.0.0 — accept connections from any interface (external access)\n127.0.0.1 — local connections only"
+msgstr "0.0.0.0 — 接受来自所有网口的连接（允许外部访问）\n127.0.0.1 — 仅本地连接"
+
+msgid "Listen Port"
+msgstr "监听端口"
+
+msgid "Log Level"
+msgstr "日志级别"
+
+msgid "Data Directory"
+msgstr "数据目录"
+
+msgid "Storage location for workspace, memory, and database files."
+msgstr "工作区、记忆和数据库文件的存储位置。"
+
+msgid "Actions"
+msgstr "操作"
+
+msgid "Check Status"
+msgstr "查看状态"
+
+msgid "Refresh Status"
+msgstr "刷新状态"

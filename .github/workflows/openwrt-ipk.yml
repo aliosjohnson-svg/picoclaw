@@ -1,0 +1,300 @@
+name: Build OpenWRT IPK
+
+on:
+  # Manual trigger with optional tag override
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag to build (leave empty to use git tag / dev)"
+        required: false
+        type: string
+      archs:
+        description: "Architectures to build (comma-separated, or 'all')"
+        required: false
+        default: "all"
+        type: string
+      attach_release:
+        description: "Attach IPKs to an existing GitHub Release"
+        required: false
+        default: false
+        type: boolean
+
+  # Trigger when a version tag is pushed (e.g. v0.2.5)
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+  # Also run on release publication so IPKs are attached automatically
+  release:
+    types: [published]
+
+permissions:
+  contents: write   # needed to upload release assets
+
+# ─── Matrix Definition ────────────────────────────────────────────────────────
+# Each entry becomes one parallel build job.
+# Fields:
+#   arch       - the name passed to build.sh
+#   goarch     - Go GOARCH
+#   goarm      - Go GOARM (empty string = not set)
+#   gomips     - Go GOMIPS (softfloat for MIPS OpenWRT targets)
+#   os_arch    - OpenWRT package architecture suffix
+env:
+  GO_VERSION_FILE: go.mod
+
+jobs:
+  # ─── Determine which architectures to build ──────────────────────────────
+  setup:
+    name: Setup build matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+          else
+            # Use short commit hash for non-tag builds
+            echo "version=0.0.0-dev.$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build matrix
+        id: matrix
+        shell: python3 {0}
+        run: |
+          import json, os
+
+          ALL = [
+            {"arch": "aarch64", "goarch": "arm64",   "goarm": "",  "gomips": "",          "os_arch": "aarch64_generic"},
+            {"arch": "armv7",   "goarch": "arm",      "goarm": "7", "gomips": "",          "os_arch": "arm_cortex-a7_neon-vfpv4"},
+            {"arch": "armv6",   "goarch": "arm",      "goarm": "6", "gomips": "",          "os_arch": "arm_arm1176jzf-s_vfp"},
+            {"arch": "x86_64",  "goarch": "amd64",    "goarm": "",  "gomips": "",          "os_arch": "x86_64"},
+            {"arch": "mipsel",  "goarch": "mipsle",   "goarm": "",  "gomips": "softfloat", "os_arch": "mipsel_24kc"},
+            {"arch": "mips",    "goarch": "mips",     "goarm": "",  "gomips": "softfloat", "os_arch": "mips_24kc"},
+            {"arch": "riscv64", "goarch": "riscv64",  "goarm": "",  "gomips": "",          "os_arch": "riscv64_riscv64"},
+          ]
+
+          requested = "${{ inputs.archs || 'all' }}".strip()
+          if requested == "all" or requested == "":
+            entries = ALL
+          else:
+            wanted = {a.strip() for a in requested.split(",")}
+            entries = [e for e in ALL if e["arch"] in wanted]
+            if not entries:
+              raise ValueError(f"No valid arch in: {requested!r}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+            f.write(f"matrix={json.dumps({'include': entries})}\n")
+
+  # ─── Build IPK packages ───────────────────────────────────────────────────
+  build:
+    name: Build IPK (${{ matrix.arch }})
+    needs: setup
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ env.GO_VERSION_FILE }}
+          cache: true
+
+      - name: Cross-compile picoclaw
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+          GOMIPS: ${{ matrix.gomips }}
+          VERSION: ${{ needs.setup.outputs.version }}
+        run: |
+          OUT="openwrt/dist/build_${{ matrix.arch }}/picoclaw"
+          mkdir -p "$(dirname "$OUT")"
+          go build \
+            -trimpath \
+            -tags "goolm stdjson" \
+            -ldflags "-s -w \
+              -X github.com/sipeed/picoclaw/pkg/config.Version=v${VERSION} \
+              -X github.com/sipeed/picoclaw/pkg/config.GitCommit=$(git rev-parse --short HEAD) \
+              -X github.com/sipeed/picoclaw/pkg/config.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -o "$OUT" \
+            ./cmd/picoclaw
+          echo "Binary size: $(du -sh "$OUT" | cut -f1)"
+
+      - name: Assemble picoclaw IPK
+        env:
+          VERSION: ${{ needs.setup.outputs.version }}
+          OS_ARCH: ${{ matrix.os_arch }}
+          ARCH: ${{ matrix.arch }}
+          PKG_RELEASE: "1"
+        run: |
+          set -euo pipefail
+          SRC="openwrt/package/picoclaw/files"
+          BIN="openwrt/dist/build_${ARCH}/picoclaw"
+          PKG_FULL="picoclaw_${VERSION}-${PKG_RELEASE}_${OS_ARCH}"
+          PKG_DIR="openwrt/dist/build_${ARCH}/pkg_picoclaw"
+          IPK_DIR="openwrt/dist/build_${ARCH}/ipk"
+          mkdir -p "$IPK_DIR"
+
+          # Filesystem tree
+          install -d "${PKG_DIR}/usr/bin"
+          install -d "${PKG_DIR}/etc/init.d"
+          install -d "${PKG_DIR}/etc/config"
+          install -d "${PKG_DIR}/etc/picoclaw"
+          install -m 0755 "$BIN"                        "${PKG_DIR}/usr/bin/picoclaw"
+          install -m 0755 "${SRC}/picoclaw.init"        "${PKG_DIR}/etc/init.d/picoclaw"
+          install -m 0600 "${SRC}/picoclaw.config"      "${PKG_DIR}/etc/config/picoclaw"
+
+          # Control files
+          BINARY_SIZE=$(du -sk "$BIN" | cut -f1)
+          cat > "${PKG_DIR}/control" <<EOF
+          Package: picoclaw
+          Version: ${VERSION}-${PKG_RELEASE}
+          Architecture: ${OS_ARCH}
+          Maintainer: Sipeed <support@sipeed.com>
+          Section: utils
+          Priority: optional
+          Installed-Size: ${BINARY_SIZE}
+          Depends:
+          Description: Ultra-lightweight personal AI agent (gateway mode)
+           PicoClaw is a pure-Go AI assistant framework supporting 30+ LLM
+           providers and 17+ chat channels with a tiny memory footprint.
+          EOF
+
+          printf '/etc/config/picoclaw\n' > "${PKG_DIR}/conffiles"
+
+          cat > "${PKG_DIR}/postinst" <<'POSTINST'
+          #!/bin/sh
+          [ "${IPKG_NO_SCRIPT}" = "1" ] && exit 0
+          [ -x /etc/init.d/picoclaw ] && /etc/init.d/picoclaw enable
+          exit 0
+          POSTINST
+          chmod 0755 "${PKG_DIR}/postinst"
+
+          cat > "${PKG_DIR}/prerm" <<'PRERM'
+          #!/bin/sh
+          [ "${IPKG_NO_SCRIPT}" = "1" ] && exit 0
+          [ -x /etc/init.d/picoclaw ] && {
+            /etc/init.d/picoclaw stop    2>/dev/null || true
+            /etc/init.d/picoclaw disable 2>/dev/null || true
+          }
+          exit 0
+          PRERM
+          chmod 0755 "${PKG_DIR}/prerm"
+
+          # Pack IPK (ar archive)
+          bash openwrt/scripts/pack_ipk.sh "$PKG_DIR" "${IPK_DIR}/${PKG_FULL}.ipk"
+          echo "ipk_path=${IPK_DIR}/${PKG_FULL}.ipk" >> "$GITHUB_ENV"
+          echo "pkg_full=${PKG_FULL}"                >> "$GITHUB_ENV"
+
+      - name: Assemble luci-app-picoclaw IPK
+        env:
+          OS_ARCH: ${{ matrix.os_arch }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          LUCI_SRC="openwrt/package/luci-app-picoclaw/files"
+          LUCI_DIR="openwrt/dist/build_${ARCH}/pkg_luci"
+          IPK_DIR="openwrt/dist/build_${ARCH}/ipk"
+          LUCI_PKG_FULL="luci-app-picoclaw_1.0.0-1_all"
+
+          install -d "${LUCI_DIR}/usr/lib/lua/luci/controller"
+          install -d "${LUCI_DIR}/usr/lib/lua/luci/model/cbi/picoclaw"
+          install -d "${LUCI_DIR}/usr/lib/lua/luci/i18n"
+          install -d "${LUCI_DIR}/usr/share/luci/acl.d"
+
+          install -m 0644 "${LUCI_SRC}/luci/controller/picoclaw.lua" \
+            "${LUCI_DIR}/usr/lib/lua/luci/controller/picoclaw.lua"
+          install -m 0644 "${LUCI_SRC}/luci/model/cbi/picoclaw/picoclaw.lua" \
+            "${LUCI_DIR}/usr/lib/lua/luci/model/cbi/picoclaw/picoclaw.lua"
+          install -m 0644 "${LUCI_SRC}/luci/i18n/picoclaw.zh-cn.po" \
+            "${LUCI_DIR}/usr/lib/lua/luci/i18n/picoclaw.zh-cn.po"
+          install -m 0644 "${LUCI_SRC}/luci/acl.d/luci-app-picoclaw.json" \
+            "${LUCI_DIR}/usr/share/luci/acl.d/luci-app-picoclaw.json"
+
+          cat > "${LUCI_DIR}/control" <<EOF
+          Package: luci-app-picoclaw
+          Version: 1.0.0-1
+          Architecture: all
+          Maintainer: Sipeed <support@sipeed.com>
+          Section: luci
+          Priority: optional
+          Installed-Size: 20
+          Depends: picoclaw, luci-base
+          Description: LuCI interface for PicoClaw AI Agent
+           Provides web UI configuration for API tokens, model selection,
+           and gateway settings via the OpenWRT LuCI admin panel.
+          EOF
+
+          cat > "${LUCI_DIR}/postinst" <<'POSTINST'
+          #!/bin/sh
+          [ "${IPKG_NO_SCRIPT}" = "1" ] && exit 0
+          rm -f /tmp/luci-indexcache 2>/dev/null || true
+          [ -f /usr/bin/luci-reload ] && /usr/bin/luci-reload 2>/dev/null || true
+          exit 0
+          POSTINST
+          chmod 0755 "${LUCI_DIR}/postinst"
+
+          bash openwrt/scripts/pack_ipk.sh "$LUCI_DIR" "${IPK_DIR}/${LUCI_PKG_FULL}.ipk"
+
+      - name: Upload IPKs as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ipk-${{ matrix.arch }}
+          path: openwrt/dist/build_${{ matrix.arch }}/ipk/*.ipk
+          retention-days: 30
+
+  # ─── Collect all IPKs and attach to GitHub Release ───────────────────────
+  release-assets:
+    name: Attach IPKs to Release
+    needs: [setup, build]
+    runs-on: ubuntu-latest
+    # Run when triggered by a tag push, a release event, or manual "attach" request
+    if: |
+      startsWith(github.ref, 'refs/tags/v') ||
+      github.event_name == 'release' ||
+      (github.event_name == 'workflow_dispatch' && inputs.attach_release == true)
+
+    steps:
+      - name: Download all IPK artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ipk-*
+          path: dist/
+          merge-multiple: true
+
+      - name: List collected IPKs
+        run: ls -lh dist/
+
+      - name: Determine release tag
+        id: tag
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=v${{ needs.setup.outputs.version }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload IPKs to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          files: dist/*.ipk
+          fail_on_unmatched_files: true
