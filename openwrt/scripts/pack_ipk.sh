@@ -11,8 +11,9 @@
 
 set -euo pipefail
 
-SRC="${1:?Usage: pack_ipk.sh <staged_dir> <output.ipk>}"
-OUT="${2:?Usage: pack_ipk.sh <staged_dir> <output.ipk>}"
+SRC="$(realpath "${1:?Usage: pack_ipk.sh <staged_dir> <output.ipk>}")"
+# Resolve to absolute path before any cd; use -m so the file needn't exist yet
+OUT="$(realpath -m "${2:?Usage: pack_ipk.sh <staged_dir> <output.ipk>}")"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
