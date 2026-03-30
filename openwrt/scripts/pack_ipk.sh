@@ -23,11 +23,14 @@ OUT="$(realpath -m "${2:?Usage: pack_ipk.sh <staged_dir> <output.ipk>}")"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
-# Strip leading whitespace from control files (heredoc indentation artifact)
+# Strip leading whitespace from control files (heredoc indentation artifact).
+# Scripts (postinst/prerm/etc.) must be 0755; sed writes a new file losing
+# the executable bit, so we restore it explicitly for script files.
 for f in control conffiles postinst prerm preinst postrm; do
     [ -f "$SRC/$f" ] || continue
     sed 's/^[[:space:]]*//' "$SRC/$f" > "$tmp/_${f}_clean"
     mv "$tmp/_${f}_clean" "$SRC/$f"
+    case "$f" in postinst|prerm|preinst|postrm) chmod 0755 "$SRC/$f" ;; esac
 done
 
 # data.tar.gz — installed filesystem (exclude IPK control-plane files)
