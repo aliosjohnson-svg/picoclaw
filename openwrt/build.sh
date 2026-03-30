@@ -9,7 +9,7 @@
 #   mipsel   - MIPS little-endian (e.g. TP-Link, older Xiaomi)
 #   mips     - MIPS big-endian
 #
-# Requires: go 1.21+, tar, gzip, binutils (ar)
+# Requires: go 1.21+, tar, gzip
 
 set -euo pipefail
 

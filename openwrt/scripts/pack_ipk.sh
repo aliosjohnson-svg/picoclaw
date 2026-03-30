@@ -1,6 +1,11 @@
 #!/bin/bash
-# Pack a staged directory into an OpenWRT IPK file (ar archive).
+# Pack a staged directory into an OpenWRT IPK file.
 # Usage: pack_ipk.sh <staged_dir> <output.ipk>
+#
+# OpenWRT IPK format: outer gzipped tar containing:
+#   ./debian-binary   "2.0\n"
+#   ./control.tar.gz  package metadata + scripts
+#   ./data.tar.gz     installed filesystem tree
 #
 # staged_dir layout:
 #   control         (required)  package metadata
@@ -48,8 +53,9 @@ done
     tar czf "$tmp/control.tar.gz" $meta
 )
 
-echo "2.0" > "$tmp/debian-binary"
+printf '2.0\n' > "$tmp/debian-binary"
 
+# Outer wrapper: IPK is a plain tar.gz (NOT an ar archive like .deb)
 mkdir -p "$(dirname "$OUT")"
-(cd "$tmp" && ar rc "$OUT" debian-binary control.tar.gz data.tar.gz)
+(cd "$tmp" && tar czf "$OUT" ./debian-binary ./control.tar.gz ./data.tar.gz)
 echo "Packed: $OUT  ($(du -sh "$OUT" | cut -f1))"
